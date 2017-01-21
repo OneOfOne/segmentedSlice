@@ -1,4 +1,4 @@
-# segmentedSlice
+# SegmentedSlice [![GoDoc](http://godoc.org/github.com/OneOfOne/segmentedSlice?status.svg)](http://godoc.org/github.com/OneOfOne/segmentedSlice) [![Build Status](https://travis-ci.org/OneOfOne/segmentedSlice.svg?branch=master)](https://travis-ci.org/OneOfOne/segmentedSlice)
 A fast, index-able, sort-able, grow-only Slice.
 
 # FAQ
