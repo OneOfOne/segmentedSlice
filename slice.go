@@ -30,33 +30,56 @@ type SegmentedSlice struct {
 	cap    int
 	segLen int
 
+	baseIdx int
+
 	data   [][]interface{}
 	lessFn func(a, b interface{}) bool
 
 	typ reflect.Type
 }
 
-// Get returns the item at the specified index, if i > Len(), it panics.
+// Get returns the item at the specified index, if i > Cap(), it panics.
 func (l *SegmentedSlice) Get(i int) interface{} {
-	return *l.ptrAt(i)
+	return *l.ptrAt(l.baseIdx + i)
 }
 
-// Set sets the value at the specified index, if i > Len(), it panics.
+// Set sets the value at the specified index, if i > Cap(), it panics.
 func (l *SegmentedSlice) Set(i int, v interface{}) {
-	*l.ptrAt(i) = v
+	*l.ptrAt(l.baseIdx + i) = v
 }
 
 // Append appends vals to the slice.
-func (l *SegmentedSlice) Append(vals ...interface{}) {
-	l.grow(len(vals))
+// Returns a new SegmentedSlice if operating on a sub-slice.
+func (l *SegmentedSlice) Append(vals ...interface{}) *SegmentedSlice {
+	if l.baseIdx != 0 {
+		l = l.Copy()
+	}
+
+	l.Grow(len(vals))
 	for _, v := range vals {
 		*l.ptrAt(l.len) = v
 		l.len++
 	}
+
+	return l
+}
+
+// AppendTo appends all the data in the current slice to `other` and returns `other`.
+func (l *SegmentedSlice) AppendTo(oss *SegmentedSlice) *SegmentedSlice {
+	// TODO optimize
+	l.ForEach(func(i int, v interface{}) (breakNow bool) {
+		oss = oss.Append(v)
+		return
+	})
+	return oss
 }
 
 // Pop deletes and returns the last item in the slice.
+// Can't be used on a subslice.
 func (l *SegmentedSlice) Pop() (v interface{}) {
+	if l.baseIdx != 0 {
+		panic("can't pop on a sub slice")
+	}
 	p := l.ptrAt(l.len - 1)
 	v = *p
 	*p = nil
@@ -67,14 +90,16 @@ func (l *SegmentedSlice) Pop() (v interface{}) {
 // ForEachAt loops over the slice and calls fn for each element.
 // If fn returns true, it breaks early and returns true otherwise returns false.
 func (l *SegmentedSlice) ForEachAt(i int, fn func(i int, v interface{}) (breakNow bool)) bool {
-	di, si := l.index(i)
+	di, si := l.index(l.baseIdx + i)
 	for dii := di; dii < len(l.data); dii++ {
 		s := l.data[dii]
 		for sii := si; sii < len(s); sii++ {
 			if fn(i, s[sii]) {
 				return true
 			}
-			i++
+			if i++; i == l.len {
+				return false
+			}
 		}
 		si = 0 // only needed to be > 0 if we're starting at a specific index
 	}
@@ -113,6 +138,24 @@ func (l *SegmentedSlice) IteratorAt(i int) *Iterator {
 	}
 }
 
+// Slice returns a sub-slice, the equivalent of ss[start:end], modifying any data in the returned slice modifies the parent.
+func (l *SegmentedSlice) Slice(start, end int) *SegmentedSlice {
+	cp := *l
+	cp.len, cp.baseIdx = end-start, start
+	return &cp
+}
+
+func (l *SegmentedSlice) Copy() *SegmentedSlice {
+	nss := NewSortable(l.segLen, l.lessFn)
+	nss.Grow(l.len)
+	nss.typ, nss.len = l.typ, l.len
+	l.ForEach(func(i int, v interface{}) (_ bool) {
+		nss.Set(i, v)
+		return
+	})
+	return nss
+}
+
 // Len returns the number of elements in the slice.
 func (l *SegmentedSlice) Len() int { return l.len }
 
@@ -136,21 +179,18 @@ func (l *SegmentedSlice) MarshalJSON() ([]byte, error) {
 		return []byte("[]"), nil
 	}
 
-	var (
-		b      = bytes.NewBuffer(make([]byte, 0, 2+(5*l.Len())))
-		maxIdx = l.Len() - 1
-	)
+	b := bytes.NewBuffer(make([]byte, 0, 2+(5*l.Len())))
 
 	b.WriteByte('[')
+
 	l.ForEach(func(i int, v interface{}) (_ bool) {
 		j, _ := json.Marshal(v)
 		b.Write(j)
-		if i < maxIdx {
-			b.WriteByte(',')
-		}
+		b.WriteByte(',')
 		return
 	})
-	b.WriteByte(']')
+
+	b.Bytes()[b.Len()-1] = ']'
 
 	return b.Bytes(), nil
 }
@@ -161,6 +201,8 @@ func (l *SegmentedSlice) MarshalJSON() ([]byte, error) {
 // 	ss.SetUnmarshalType(reflect.TypeOf(&DataStruct{}))
 func (l *SegmentedSlice) SetUnmarshalType(val interface{}) {
 	switch val := val.(type) {
+	case nil:
+		l.typ = nil
 	case reflect.Type:
 		l.typ = val
 	case reflect.Value:
@@ -214,7 +256,11 @@ func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
 }
 
 // Grow grows internal data structure to fit `sz` amount of new items.
-func (l *SegmentedSlice) grow(sz int) int {
+func (l *SegmentedSlice) Grow(sz int) int {
+	if l.baseIdx != 0 {
+		panic("can't grow a sub slice")
+	}
+
 	if l.segLen == 0 {
 		l.segLen = DefaultSegmentLen
 	}
@@ -225,12 +271,9 @@ func (l *SegmentedSlice) grow(sz int) int {
 
 	newSize := 1 + (sz-l.cap)/l.segLen
 
-	//log.Println(l.len, l.cap, sz, sz <= l.cap, newSize)
-
 	for i := 0; i < newSize; i++ {
 		l.data = append(l.data, make([]interface{}, l.segLen))
 		l.cap += l.segLen
-
 	}
 
 	return newSize
