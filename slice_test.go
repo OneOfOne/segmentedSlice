@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-func printJson(tb testing.TB, v interface{}) {
-	j, _ := json.MarshalIndent(v, "", "  ")
-	tb.Logf("%s", j)
-}
-
 func TestSegmentedSlice(t *testing.T) {
 	rand.Seed(0)
 	const sliceLen = 100
@@ -41,7 +36,7 @@ func TestSegmentedSlice(t *testing.T) {
 	})
 
 	t.Run("Slice and Copy", func(t *testing.T) {
-		for it := l.Slice(5, 10).Copy().IteratorAt(0); it.More(); {
+		for it := l.Slice(5, 10).Copy().Iter(); it.More(); {
 			if idx, v := it.NextIndex(); v.(int) != idx+5 {
 				t.Errorf("expected %v, got %v", idx+5, v)
 			}
@@ -50,7 +45,7 @@ func TestSegmentedSlice(t *testing.T) {
 }
 
 func TestJSON(t *testing.T) {
-	testData := intJsonData(100)
+	testData := intJSONData(100)
 
 	l := New(5)
 	for i := 0; i < 100; i++ {
@@ -59,7 +54,7 @@ func TestJSON(t *testing.T) {
 	j, _ := json.Marshal(l)
 
 	t.Run("Marshal", func(t *testing.T) {
-		if bytes.Compare(j, testData) != 0 {
+		if !bytes.Equal(j, testData) {
 			t.Fatalf("expected:\n\t%s\ngot:\n\t:%s", testData, j)
 		}
 	})
@@ -75,7 +70,7 @@ func TestJSON(t *testing.T) {
 			t.Fatalf("expected %d segLen, got %d", DefaultSegmentLen, ss.segLen)
 		}
 
-		for it := l.IteratorAt(0); it.More(); {
+		for it := l.Iter(); it.More(); {
 			idx, v := it.NextIndex()
 			// untyped numbers in json are automatically converted to float64
 			if ss.Get(idx).(float64) != float64(v.(int)) {
@@ -97,7 +92,7 @@ func TestJSON(t *testing.T) {
 			t.Fatalf("expected %d segLen, got %d", DefaultSegmentLen, ss.segLen)
 		}
 
-		for it := l.IteratorAt(0); it.More(); {
+		for it := l.Iter(); it.More(); {
 			idx, v := it.NextIndex()
 			if ss.Get(idx).(int) != v.(int) {
 				t.Fatalf("something is really wrong")
@@ -128,11 +123,16 @@ func BenchmarkAppendNormalSlice(b *testing.B) {
 	}
 }
 
-func intJsonData(ln int) []byte {
+func intJSONData(ln int) []byte {
 	s := make([]interface{}, ln)
 	for i := range s {
 		s[i] = i
 	}
 	j, _ := json.Marshal(s)
 	return j
+}
+
+func printJSON(tb testing.TB, v interface{}) {
+	j, _ := json.MarshalIndent(v, "", "  ")
+	tb.Logf("%s", j)
 }

@@ -49,33 +49,27 @@ func (l *SegmentedSlice) Set(i int, v interface{}) {
 }
 
 // Append appends vals to the slice.
-// Returns a new SegmentedSlice if operating on a sub-slice.
-func (l *SegmentedSlice) Append(vals ...interface{}) *SegmentedSlice {
-	if l.baseIdx != 0 {
-		l = l.Copy()
-	}
-
+// If used on a sub-slice, it turns into an independent slice.
+func (l *SegmentedSlice) Append(vals ...interface{}) {
 	l.Grow(len(vals))
 	for _, v := range vals {
 		*l.ptrAt(l.len) = v
 		l.len++
 	}
-
-	return l
 }
 
 // AppendTo appends all the data in the current slice to `other` and returns `other`.
 func (l *SegmentedSlice) AppendTo(oss *SegmentedSlice) *SegmentedSlice {
 	// TODO optimize
 	l.ForEach(func(i int, v interface{}) (breakNow bool) {
-		oss = oss.Append(v)
+		oss.Append(v)
 		return
 	})
 	return oss
 }
 
 // Pop deletes and returns the last item in the slice.
-// Can't be used on a subslice.
+// If used on a sub-slice, it turns into an independent slice.
 func (l *SegmentedSlice) Pop() (v interface{}) {
 	if l.baseIdx != 0 {
 		panic("can't pop on a sub slice")
@@ -112,31 +106,21 @@ func (l *SegmentedSlice) ForEach(fn func(i int, v interface{}) (breakNow bool)) 
 	return l.ForEachAt(0, fn)
 }
 
-// IterAt returns an iteration channel starting at index.
-// If you want to break early, call ConsumeIter(ch) first to prevent leaking memory.
-func (l *SegmentedSlice) IterAt(i int) <-chan interface{} {
-	ch := make(chan interface{}, l.segLen)
-	go l.ForEachAt(i, func(_ int, v interface{}) bool {
-		ch <- v
-		return false
-	})
-	return ch
-}
-
-// Iter is an alias for IterAt(0).
-func (l *SegmentedSlice) Iter() <-chan interface{} { return l.IterAt(0) }
-
-// IteratorAt returns an Iterator object
+// IterAt returns an Iterator object
 // Example:
-// 	for it := ss.IteratorAt(0); it.More(); {
+// 	for it := ss.IterAt(0, ss.Len()); it.More(); {
 // 		log.Println(it.Next())
 // 	}
-func (l *SegmentedSlice) IteratorAt(i int) *Iterator {
+func (l *SegmentedSlice) IterAt(start, end int) *Iterator {
 	return &Iterator{
-		ss: l,
-		i:  i,
+		ss:    l,
+		start: start,
+		end:   end,
 	}
 }
+
+// Iter is an alias for IterAt(0, ss.Len()).
+func (l *SegmentedSlice) Iter() *Iterator { return l.IterAt(0, l.Len()) }
 
 // Slice returns a sub-slice, the equivalent of ss[start:end], modifying any data in the returned slice modifies the parent.
 func (l *SegmentedSlice) Slice(start, end int) *SegmentedSlice {
@@ -145,6 +129,8 @@ func (l *SegmentedSlice) Slice(start, end int) *SegmentedSlice {
 	return &cp
 }
 
+// Copy returns an exact copy of the slice that could be used independently.
+// Copy is internally used if you call Append, Pop or Grow on a sub-slice.
 func (l *SegmentedSlice) Copy() *SegmentedSlice {
 	nss := NewSortable(l.segLen, l.lessFn)
 	nss.Grow(l.len)
@@ -154,6 +140,32 @@ func (l *SegmentedSlice) Copy() *SegmentedSlice {
 		return
 	})
 	return nss
+}
+
+// Grow grows internal data structure to fit `sz` amount of new items.
+// If used on a sub-slice, it turns into an independent slice.
+func (l *SegmentedSlice) Grow(sz int) int {
+	if l.baseIdx != 0 {
+		cp := l.Copy()
+		*l = *cp
+	}
+
+	if l.segLen == 0 {
+		l.segLen = DefaultSegmentLen
+	}
+
+	if sz = l.len + sz; sz <= l.cap {
+		return 0
+	}
+
+	newSize := 1 + (sz-l.cap)/l.segLen
+
+	for i := 0; i < newSize; i++ {
+		l.data = append(l.data, make([]interface{}, l.segLen))
+		l.cap += l.segLen
+	}
+
+	return newSize
 }
 
 // Len returns the number of elements in the slice.
@@ -174,6 +186,7 @@ func (l *SegmentedSlice) Swap(i, j int) {
 	*a, *b = *b, *a
 }
 
+// MarshalJSON implements json.Marshaler
 func (l *SegmentedSlice) MarshalJSON() ([]byte, error) {
 	if l.Len() == 0 {
 		return []byte("[]"), nil
@@ -212,6 +225,7 @@ func (l *SegmentedSlice) SetUnmarshalType(val interface{}) {
 	}
 }
 
+// UnmarshalJSON implements json.Unmarshaler
 func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
 	var (
 		dec = json.NewDecoder(bytes.NewReader(b))
@@ -253,30 +267,6 @@ func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
 	}
 
 	return nil
-}
-
-// Grow grows internal data structure to fit `sz` amount of new items.
-func (l *SegmentedSlice) Grow(sz int) int {
-	if l.baseIdx != 0 {
-		panic("can't grow a sub slice")
-	}
-
-	if l.segLen == 0 {
-		l.segLen = DefaultSegmentLen
-	}
-
-	if sz = l.len + sz; sz <= l.cap {
-		return 0
-	}
-
-	newSize := 1 + (sz-l.cap)/l.segLen
-
-	for i := 0; i < newSize; i++ {
-		l.data = append(l.data, make([]interface{}, l.segLen))
-		l.cap += l.segLen
-	}
-
-	return newSize
 }
 
 // index returns the internal data index and slice index for an index
