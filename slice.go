@@ -1,4 +1,14 @@
-package list
+package segmentedSlice
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"reflect"
+)
+
+// DefaultSegmentLen is used if segLen is 0, mostly during an auto-constructed slice from JSON.
+var DefaultSegmentLen = 100
 
 // New returns a new SegmentedSlice with the specified segment length
 func New(segLen int) *SegmentedSlice {
@@ -22,6 +32,8 @@ type SegmentedSlice struct {
 
 	data   [][]interface{}
 	lessFn func(a, b interface{}) bool
+
+	typ reflect.Type
 }
 
 // Get returns the item at the specified index, if i > Len(), it panics.
@@ -75,6 +87,8 @@ func (l *SegmentedSlice) ForEach(fn func(i int, v interface{}) (breakNow bool)) 
 	return l.ForEachAt(0, fn)
 }
 
+// IterAt returns an iteration channel starting at index.
+// If you want to break early, call ConsumeIter(ch) first to prevent leaking memory.
 func (l *SegmentedSlice) IterAt(i int) <-chan interface{} {
 	ch := make(chan interface{}, l.segLen)
 	go l.ForEachAt(i, func(_ int, v interface{}) bool {
@@ -84,7 +98,20 @@ func (l *SegmentedSlice) IterAt(i int) <-chan interface{} {
 	return ch
 }
 
+// Iter is an alias for IterAt(0).
 func (l *SegmentedSlice) Iter() <-chan interface{} { return l.IterAt(0) }
+
+// IteratorAt returns an Iterator object
+// Example:
+// 	for it := ss.IteratorAt(0); it.More(); {
+// 		log.Println(it.Next())
+// 	}
+func (l *SegmentedSlice) IteratorAt(i int) *Iterator {
+	return &Iterator{
+		ss: l,
+		i:  i,
+	}
+}
 
 // Len returns the number of elements in the slice.
 func (l *SegmentedSlice) Len() int { return l.len }
@@ -104,8 +131,94 @@ func (l *SegmentedSlice) Swap(i, j int) {
 	*a, *b = *b, *a
 }
 
-// grow grows the data list returns the number of added segments
+func (l *SegmentedSlice) MarshalJSON() ([]byte, error) {
+	if l.Len() == 0 {
+		return []byte("[]"), nil
+	}
+
+	var (
+		b      = bytes.NewBuffer(make([]byte, 0, 2+(5*l.Len())))
+		maxIdx = l.Len() - 1
+	)
+
+	b.WriteByte('[')
+	l.ForEach(func(i int, v interface{}) (_ bool) {
+		j, _ := json.Marshal(v)
+		b.Write(j)
+		if i < maxIdx {
+			b.WriteByte(',')
+		}
+		return
+	})
+	b.WriteByte(']')
+
+	return b.Bytes(), nil
+}
+
+// SetUnmarshalType sets the internal type used for UnmarshalJSON.
+// Example:
+// 	ss.SetUnmarshalType(&DataStruct{})
+// 	ss.SetUnmarshalType(reflect.TypeOf(&DataStruct{}))
+func (l *SegmentedSlice) SetUnmarshalType(val interface{}) {
+	switch val := val.(type) {
+	case reflect.Type:
+		l.typ = val
+	case reflect.Value:
+		l.typ = val.Type()
+	default:
+		l.typ = reflect.TypeOf(val)
+	}
+}
+
+func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
+	var (
+		dec = json.NewDecoder(bytes.NewReader(b))
+		t   json.Token
+	)
+
+	if t, err = dec.Token(); err != nil {
+		return
+	}
+
+	if d, ok := t.(json.Delim); !ok || d != '[' {
+		return fmt.Errorf("expected '[', got: %v (%T)", t, t)
+	}
+
+	if l.typ != nil {
+		for dec.More() {
+			v := reflect.New(l.typ)
+			if err = dec.Decode(v.Interface()); err != nil {
+				return
+			}
+			l.Append(v.Elem().Interface())
+		}
+	} else {
+		for dec.More() {
+			var v interface{}
+			if err = dec.Decode(&v); err != nil {
+				return
+			}
+			l.Append(v)
+		}
+	}
+
+	if t, err = dec.Token(); err != nil {
+		return
+	}
+
+	if d, ok := t.(json.Delim); !ok || d != ']' {
+		return fmt.Errorf("expected ']', got: %v (%T)", t, t)
+	}
+
+	return nil
+}
+
+// Grow grows internal data structure to fit `sz` amount of new items.
 func (l *SegmentedSlice) grow(sz int) int {
+	if l.segLen == 0 {
+		l.segLen = DefaultSegmentLen
+	}
+
 	if sz = l.len + sz; sz <= l.cap {
 		return 0
 	}
