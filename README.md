@@ -1,14 +1,14 @@
 # SegmentedSlice [![GoDoc](http://godoc.org/github.com/OneOfOne/segmentedSlice?status.svg)](http://godoc.org/github.com/OneOfOne/segmentedSlice) [![Build Status](https://travis-ci.org/OneOfOne/segmentedSlice.svg?branch=master)](https://travis-ci.org/OneOfOne/segmentedSlice)
 A fast, index-able, sort-able, grow-only Slice.
 
-# FAQ
+## FAQ
 
-## Why?
+### Why?
 * Appending to a normal slice can get slow and very memory heavy as the slice grows,
 	and for a lot of work loads it's usually append-only with some sorting.
 
 
-# Benchmarks
+## Benchmarks
 
 ```go
 ➤ go test -benchmem -bench=. -benchtime=5s

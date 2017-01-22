@@ -2,7 +2,7 @@ package segmentedSlice
 
 // Iterator is a SegmentedSlice iterator.
 type Iterator struct {
-	ss         *SegmentedSlice
+	ss         *Slice
 	start, end int
 }
 

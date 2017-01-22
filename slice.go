@@ -10,22 +10,22 @@ import (
 // DefaultSegmentLen is used if segLen is 0, mostly during an auto-constructed slice from JSON.
 var DefaultSegmentLen = 100
 
-// New returns a new SegmentedSlice with the specified segment length
-func New(segLen int) *SegmentedSlice {
+// New returns a new Slice with the specified segment length
+func New(segLen int) *Slice {
 	return NewSortable(segLen, nil)
 }
 
-// NewSortable returns a SegmentedSlice that supports the sort.Interface
-func NewSortable(segLen int, lessFn func(a, b interface{}) bool) *SegmentedSlice {
-	return &SegmentedSlice{
+// NewSortable returns a Slice that supports the sort.Interface
+func NewSortable(segLen int, lessFn func(a, b interface{}) bool) *Slice {
+	return &Slice{
 		segLen: segLen,
 		lessFn: lessFn,
 	}
 }
 
-// SegmentedSlice is a special slice-of-slices, when it grows it creates a new internal slice
+// Slice is a special slice-of-slices, when it grows it creates a new internal slice
 // rather than growing and copying data.
-type SegmentedSlice struct {
+type Slice struct {
 	len    int
 	cap    int
 	segLen int
@@ -39,29 +39,29 @@ type SegmentedSlice struct {
 }
 
 // Get returns the item at the specified index, if i > Cap(), it panics.
-func (l *SegmentedSlice) Get(i int) interface{} {
-	return *l.ptrAt(l.baseIdx + i)
+func (ss *Slice) Get(i int) interface{} {
+	return *ss.ptrAt(ss.baseIdx + i)
 }
 
 // Set sets the value at the specified index, if i > Cap(), it panics.
-func (l *SegmentedSlice) Set(i int, v interface{}) {
-	*l.ptrAt(l.baseIdx + i) = v
+func (ss *Slice) Set(i int, v interface{}) {
+	*ss.ptrAt(ss.baseIdx + i) = v
 }
 
 // Append appends vals to the slice.
 // If used on a sub-slice, it turns into an independent slice.
-func (l *SegmentedSlice) Append(vals ...interface{}) {
-	l.Grow(len(vals))
+func (ss *Slice) Append(vals ...interface{}) {
+	ss.Grow(len(vals))
 	for _, v := range vals {
-		*l.ptrAt(l.len) = v
-		l.len++
+		*ss.ptrAt(ss.len) = v
+		ss.len++
 	}
 }
 
 // AppendTo appends all the data in the current slice to `other` and returns `other`.
-func (l *SegmentedSlice) AppendTo(oss *SegmentedSlice) *SegmentedSlice {
+func (ss *Slice) AppendTo(oss *Slice) *Slice {
 	// TODO optimize
-	l.ForEach(func(i int, v interface{}) (breakNow bool) {
+	ss.ForEach(func(i int, v interface{}) (breakNow bool) {
 		oss.Append(v)
 		return
 	})
@@ -70,28 +70,28 @@ func (l *SegmentedSlice) AppendTo(oss *SegmentedSlice) *SegmentedSlice {
 
 // Pop deletes and returns the last item in the slice.
 // If used on a sub-slice, it turns into an independent slice.
-func (l *SegmentedSlice) Pop() (v interface{}) {
-	if l.baseIdx != 0 {
+func (ss *Slice) Pop() (v interface{}) {
+	if ss.baseIdx != 0 {
 		panic("can't pop on a sub slice")
 	}
-	p := l.ptrAt(l.len - 1)
+	p := ss.ptrAt(ss.len - 1)
 	v = *p
 	*p = nil
-	l.len--
+	ss.len--
 	return v
 }
 
 // ForEachAt loops over the slice and calls fn for each element.
 // If fn returns true, it breaks early and returns true otherwise returns false.
-func (l *SegmentedSlice) ForEachAt(i int, fn func(i int, v interface{}) (breakNow bool)) bool {
-	di, si := l.index(l.baseIdx + i)
-	for dii := di; dii < len(l.data); dii++ {
-		s := l.data[dii]
+func (ss *Slice) ForEachAt(i int, fn func(i int, v interface{}) (breakNow bool)) bool {
+	di, si := ss.index(ss.baseIdx + i)
+	for dii := di; dii < len(ss.data); dii++ {
+		s := ss.data[dii]
 		for sii := si; sii < len(s); sii++ {
 			if fn(i, s[sii]) {
 				return true
 			}
-			if i++; i == l.len {
+			if i++; i == ss.len {
 				return false
 			}
 		}
@@ -102,8 +102,8 @@ func (l *SegmentedSlice) ForEachAt(i int, fn func(i int, v interface{}) (breakNo
 }
 
 // ForEach is an alias for ForEachAt(0, fn).
-func (l *SegmentedSlice) ForEach(fn func(i int, v interface{}) (breakNow bool)) bool {
-	return l.ForEachAt(0, fn)
+func (ss *Slice) ForEach(fn func(i int, v interface{}) (breakNow bool)) bool {
+	return ss.ForEachAt(0, fn)
 }
 
 // IterAt returns an Iterator object
@@ -111,31 +111,31 @@ func (l *SegmentedSlice) ForEach(fn func(i int, v interface{}) (breakNow bool)) 
 // 	for it := ss.IterAt(0, ss.Len()); it.More(); {
 // 		log.Println(it.Next())
 // 	}
-func (l *SegmentedSlice) IterAt(start, end int) *Iterator {
+func (ss *Slice) IterAt(start, end int) *Iterator {
 	return &Iterator{
-		ss:    l,
+		ss:    ss,
 		start: start,
 		end:   end,
 	}
 }
 
 // Iter is an alias for IterAt(0, ss.Len()).
-func (l *SegmentedSlice) Iter() *Iterator { return l.IterAt(0, l.Len()) }
+func (ss *Slice) Iter() *Iterator { return ss.IterAt(0, ss.Len()) }
 
 // Slice returns a sub-slice, the equivalent of ss[start:end], modifying any data in the returned slice modifies the parent.
-func (l *SegmentedSlice) Slice(start, end int) *SegmentedSlice {
-	cp := *l
+func (ss *Slice) Slice(start, end int) *Slice {
+	cp := *ss
 	cp.len, cp.baseIdx = end-start, start
 	return &cp
 }
 
 // Copy returns an exact copy of the slice that could be used independently.
 // Copy is internally used if you call Append, Pop or Grow on a sub-slice.
-func (l *SegmentedSlice) Copy() *SegmentedSlice {
-	nss := NewSortable(l.segLen, l.lessFn)
-	nss.Grow(l.len)
-	nss.typ, nss.len = l.typ, l.len
-	l.ForEach(func(i int, v interface{}) (_ bool) {
+func (ss *Slice) Copy() *Slice {
+	nss := NewSortable(ss.segLen, ss.lessFn)
+	nss.Grow(ss.len)
+	nss.typ, nss.len = ss.typ, ss.len
+	ss.ForEach(func(i int, v interface{}) (_ bool) {
 		nss.Set(i, v)
 		return
 	})
@@ -144,66 +144,70 @@ func (l *SegmentedSlice) Copy() *SegmentedSlice {
 
 // Grow grows internal data structure to fit `sz` amount of new items.
 // If used on a sub-slice, it turns into an independent slice.
-func (l *SegmentedSlice) Grow(sz int) int {
-	if l.baseIdx != 0 {
-		cp := l.Copy()
-		*l = *cp
+func (ss *Slice) Grow(sz int) int {
+	if ss.baseIdx != 0 {
+		cp := ss.Copy()
+		*ss = *cp
 	}
 
-	if l.segLen == 0 {
-		l.segLen = DefaultSegmentLen
+	if ss.segLen == 0 {
+		ss.segLen = DefaultSegmentLen
 	}
 
-	if sz = l.len + sz; sz <= l.cap {
+	if sz = ss.len + sz; sz <= ss.cap {
 		return 0
 	}
 
-	newSize := 1 + (sz-l.cap)/l.segLen
+	newSize := 1 + (sz-ss.cap)/ss.segLen
 
 	for i := 0; i < newSize; i++ {
-		l.data = append(l.data, make([]interface{}, l.segLen))
-		l.cap += l.segLen
+		ss.data = append(ss.data, make([]interface{}, ss.segLen))
+		ss.cap += ss.segLen
 	}
 
 	return newSize
 }
 
 // Len returns the number of elements in the slice.
-func (l *SegmentedSlice) Len() int { return l.len }
+func (ss *Slice) Len() int { return ss.len }
 
 // Cap returns the max number of elements the slice can hold before growinging
-func (l *SegmentedSlice) Cap() int { return l.cap }
+func (ss *Slice) Cap() int { return ss.cap }
 
 // Segments returns the number of segments.
-func (l *SegmentedSlice) Segments() int { return len(l.data) }
+func (ss *Slice) Segments() int { return len(ss.data) }
 
 // Less adds support for sort.Interface
-func (l *SegmentedSlice) Less(i, j int) bool { return l.lessFn(l.Get(i), l.Get(j)) }
+func (ss *Slice) Less(i, j int) bool { return ss.lessFn(ss.Get(i), ss.Get(j)) }
 
 // Swap adds support for sort.Interface
-func (l *SegmentedSlice) Swap(i, j int) {
-	a, b := l.ptrAt(i), l.ptrAt(j)
+func (ss *Slice) Swap(i, j int) {
+	a, b := ss.ptrAt(i), ss.ptrAt(j)
 	*a, *b = *b, *a
 }
 
 // MarshalJSON implements json.Marshaler
-func (l *SegmentedSlice) MarshalJSON() ([]byte, error) {
-	if l.Len() == 0 {
+func (ss *Slice) MarshalJSON() ([]byte, error) {
+	if ss.Len() == 0 {
 		return []byte("[]"), nil
 	}
 
-	b := bytes.NewBuffer(make([]byte, 0, 2+(5*l.Len())))
+	var (
+		b   = bytes.NewBuffer(make([]byte, 0, 2+(6*ss.Len())))
+		enc = json.NewEncoder(b)
+		it  = ss.Iter()
+	)
 
 	b.WriteByte('[')
+	for {
+		enc.Encode(it.Next())
+		if !it.More() {
+			break
+		}
+		b.WriteString(",")
+	}
 
-	l.ForEach(func(i int, v interface{}) (_ bool) {
-		j, _ := json.Marshal(v)
-		b.Write(j)
-		b.WriteByte(',')
-		return
-	})
-
-	b.Bytes()[b.Len()-1] = ']'
+	b.WriteByte(']')
 
 	return b.Bytes(), nil
 }
@@ -212,21 +216,21 @@ func (l *SegmentedSlice) MarshalJSON() ([]byte, error) {
 // Example:
 // 	ss.SetUnmarshalType(&DataStruct{})
 // 	ss.SetUnmarshalType(reflect.TypeOf(&DataStruct{}))
-func (l *SegmentedSlice) SetUnmarshalType(val interface{}) {
+func (ss *Slice) SetUnmarshalType(val interface{}) {
 	switch val := val.(type) {
 	case nil:
-		l.typ = nil
+		ss.typ = nil
 	case reflect.Type:
-		l.typ = val
+		ss.typ = val
 	case reflect.Value:
-		l.typ = val.Type()
+		ss.typ = val.Type()
 	default:
-		l.typ = reflect.TypeOf(val)
+		ss.typ = reflect.TypeOf(val)
 	}
 }
 
 // UnmarshalJSON implements json.Unmarshaler
-func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
+func (ss *Slice) UnmarshalJSON(b []byte) (err error) {
 	var (
 		dec = json.NewDecoder(bytes.NewReader(b))
 		t   json.Token
@@ -240,13 +244,13 @@ func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
 		return fmt.Errorf("expected '[', got: %v (%T)", t, t)
 	}
 
-	if l.typ != nil {
+	if ss.typ != nil {
 		for dec.More() {
-			v := reflect.New(l.typ)
+			v := reflect.New(ss.typ)
 			if err = dec.Decode(v.Interface()); err != nil {
 				return
 			}
-			l.Append(v.Elem().Interface())
+			ss.Append(v.Elem().Interface())
 		}
 	} else {
 		for dec.More() {
@@ -254,7 +258,7 @@ func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
 			if err = dec.Decode(&v); err != nil {
 				return
 			}
-			l.Append(v)
+			ss.Append(v)
 		}
 	}
 
@@ -269,12 +273,39 @@ func (l *SegmentedSlice) UnmarshalJSON(b []byte) (err error) {
 	return nil
 }
 
-// index returns the internal data index and slice index for an index
-func (l *SegmentedSlice) index(i int) (int, int) {
-	return i / l.segLen, i % l.segLen
+// String implements fmt.Stringer
+func (ss *Slice) String() string {
+	var (
+		b  = bytes.NewBuffer(make([]byte, 0, 2+(5*ss.Len())))
+		it = ss.Iter()
+	)
+
+	b.WriteByte('[')
+
+	for {
+		fmt.Fprintf(b, "%v", it.Next())
+		if !it.More() {
+			break
+		}
+		b.WriteString(", ")
+	}
+
+	b.WriteByte(']')
+
+	return b.String()
 }
 
-func (l *SegmentedSlice) ptrAt(i int) *interface{} {
-	di, si := l.index(i)
-	return &l.data[di][si]
+// GoString implements fmt.GoStringer
+func (ss *Slice) GoString() string {
+	return fmt.Sprintf("&Slice{Len: %d, Cap: %d, Segments: %d, Data: %s }", ss.Len(), ss.Cap(), ss.Segments(), ss.String())
+}
+
+// index returns the internal data index and slice index for an index
+func (ss *Slice) index(i int) (int, int) {
+	return i / ss.segLen, i % ss.segLen
+}
+
+func (ss *Slice) ptrAt(i int) *interface{} {
+	di, si := ss.index(i)
+	return &ss.data[di][si]
 }

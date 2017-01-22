@@ -60,7 +60,7 @@ func TestJSON(t *testing.T) {
 	})
 
 	t.Run("Untyped", func(t *testing.T) {
-		var ss SegmentedSlice
+		var ss Slice
 
 		if err := json.Unmarshal(j, &ss); err != nil {
 			t.Fatal(err)
@@ -80,7 +80,7 @@ func TestJSON(t *testing.T) {
 	})
 
 	t.Run("Typed", func(t *testing.T) {
-		var ss SegmentedSlice
+		var ss Slice
 
 		ss.SetUnmarshalType(0) // set type to untyped int
 
