@@ -8,17 +8,24 @@ import (
 )
 
 // DefaultSegmentLen is used if segLen is 0, mostly during an auto-constructed slice from JSON.
-var DefaultSegmentLen = 100
+var DefaultSegmentLen = 128
 
-// New returns a new Slice with the specified segment length
+// New returns a new Slice with the specified segment length.
+// Length must be a power of two or 0, if it is 0 it will use the DefaultSegmentLen.
 func New(segLen int) *Slice {
 	return NewSortable(segLen, nil)
 }
 
 // NewSortable returns a Slice that supports the sort.Interface
+// Length must be a power of two or 0, if it is 0 it will use the DefaultSegmentLen.
 func NewSortable(segLen int, lessFn func(a, b interface{}) bool) *Slice {
+	if !isPowerOfTwo(segLen) {
+		panic("segLen is not power of two")
+	}
+
 	return &Slice{
-		segLen: segLen,
+		segLen: segLen - 1,
+		shift:  findShift(segLen),
 		lessFn: lessFn,
 	}
 }
@@ -30,6 +37,8 @@ type Slice struct {
 	cap    int
 	segLen int
 
+	shift uint
+
 	baseIdx int
 
 	data   [][]interface{}
@@ -40,7 +49,8 @@ type Slice struct {
 
 // Get returns the item at the specified index, if i > Cap(), it panics.
 func (ss *Slice) Get(i int) interface{} {
-	return *ss.ptrAt(ss.baseIdx + i)
+	di, si := ss.index(ss.baseIdx + i)
+	return ss.data[di][si]
 }
 
 // Set sets the value at the specified index, if i > Cap(), it panics.
@@ -61,6 +71,7 @@ func (ss *Slice) Append(vals ...interface{}) {
 // AppendTo appends all the data in the current slice to `other` and returns `other`.
 func (ss *Slice) AppendTo(oss *Slice) *Slice {
 	// TODO optimize
+	oss.Grow(ss.Len())
 	ss.ForEach(func(i int, v interface{}) (breakNow bool) {
 		oss.Append(v)
 		return
@@ -71,9 +82,7 @@ func (ss *Slice) AppendTo(oss *Slice) *Slice {
 // Pop deletes and returns the last item in the slice.
 // If used on a sub-slice, it turns into an independent slice.
 func (ss *Slice) Pop() (v interface{}) {
-	if ss.baseIdx != 0 {
-		panic("can't pop on a sub slice")
-	}
+	ss.Grow(0)
 	p := ss.ptrAt(ss.len - 1)
 	v = *p
 	*p = nil
@@ -132,9 +141,9 @@ func (ss *Slice) Slice(start, end int) *Slice {
 // Copy returns an exact copy of the slice that could be used independently.
 // Copy is internally used if you call Append, Pop or Grow on a sub-slice.
 func (ss *Slice) Copy() *Slice {
-	nss := NewSortable(ss.segLen, ss.lessFn)
+	nss := NewSortable(ss.segLen+1, ss.lessFn)
 	nss.Grow(ss.len)
-	nss.typ, nss.len = ss.typ, ss.len
+	nss.typ, nss.len, nss.shift = ss.typ, ss.len, ss.shift
 	ss.ForEach(func(i int, v interface{}) (_ bool) {
 		nss.Set(i, v)
 		return
@@ -150,21 +159,27 @@ func (ss *Slice) Grow(sz int) int {
 		*ss = *cp
 	}
 
-	if ss.segLen == 0 {
-		ss.segLen = DefaultSegmentLen
+	if sz == 0 { // special case for cloning
+		return 0
+	}
+
+	if ss.segLen < 1 {
+		ss.segLen = DefaultSegmentLen - 1
+		ss.shift = findShift(DefaultSegmentLen)
 	}
 
 	if sz = ss.len + sz; sz <= ss.cap {
 		return 0
 	}
 
-	newSize := 1 + (sz-ss.cap)/ss.segLen
+	segLen := ss.segLen + 1
+	newSize := 1 + (sz-ss.cap)/segLen
 
 	for i := 0; i < newSize; i++ {
-		ss.data = append(ss.data, make([]interface{}, ss.segLen))
-		ss.cap += ss.segLen
+		ss.data = append(ss.data, make([]interface{}, segLen))
+		ss.cap += segLen
 	}
-
+	//log.Println(sz, segLen, len(ss.data))
 	return newSize
 }
 
@@ -302,10 +317,23 @@ func (ss *Slice) GoString() string {
 
 // index returns the internal data index and slice index for an index
 func (ss *Slice) index(i int) (int, int) {
-	return i / ss.segLen, i % ss.segLen
+	return i >> ss.shift, i & ss.segLen
 }
 
 func (ss *Slice) ptrAt(i int) *interface{} {
 	di, si := ss.index(i)
+	// log.Println(i, di, si, ss.segLen)
 	return &ss.data[di][si]
+}
+
+func isPowerOfTwo(n int) bool {
+	return n > 0 && n&(n-1) == 0
+}
+
+func findShift(d int) (shift uint) {
+	for d > 1 {
+		d = d >> 1
+		shift++
+	}
+	return
 }

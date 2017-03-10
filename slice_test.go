@@ -8,16 +8,18 @@ import (
 	"testing"
 )
 
+var sink interface{}
+
 func TestSegmentedSlice(t *testing.T) {
 	rand.Seed(0)
-	const sliceLen = 100
-	l := NewSortable(5, func(a, b interface{}) bool { return a.(int) < b.(int) })
+	const sliceLen = 128
+	l := NewSortable(8, func(a, b interface{}) bool { return a.(int) < b.(int) })
 
 	for i := 0; i < sliceLen; i++ {
 		l.Append((sliceLen - 1) - i)
 	}
 
-	if l.Len() != 100 {
+	if l.Len() != sliceLen {
 		t.Fatalf("expected length %d, got %d", sliceLen, l.Len())
 	}
 
@@ -45,10 +47,10 @@ func TestSegmentedSlice(t *testing.T) {
 }
 
 func TestJSON(t *testing.T) {
-	testData := intJSONData(100)
+	testData := intJSONData(128)
 
-	l := New(5)
-	for i := 0; i < 100; i++ {
+	l := New(8)
+	for i := 0; i < 128; i++ {
 		l.Append(i)
 	}
 	j, _ := json.Marshal(l)
@@ -66,7 +68,7 @@ func TestJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if ss.segLen != DefaultSegmentLen {
+		if ss.segLen != DefaultSegmentLen-1 {
 			t.Fatalf("expected %d segLen, got %d", DefaultSegmentLen, ss.segLen)
 		}
 
@@ -88,7 +90,7 @@ func TestJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if ss.segLen != DefaultSegmentLen {
+		if ss.segLen != DefaultSegmentLen-1 {
 			t.Fatalf("expected %d segLen, got %d", DefaultSegmentLen, ss.segLen)
 		}
 
@@ -102,10 +104,12 @@ func TestJSON(t *testing.T) {
 }
 
 func BenchmarkAppendSegmentedSlice(b *testing.B) {
-	l := New(99) // odd number to make sure we will have an extra segment at the end.
+	l := New(128) // odd number to make sure we will have an extra segment at the end.
 	for i := 0; i < b.N; i++ {
 		l.Append(i)
 	}
+
+	sink = l
 
 	if testing.Verbose() {
 		b.Logf("len: %d, cap: %d, segments: %d", l.Len(), l.Cap(), l.Segments())
@@ -113,10 +117,12 @@ func BenchmarkAppendSegmentedSlice(b *testing.B) {
 }
 
 func BenchmarkAppendNormalSlice(b *testing.B) {
-	l := make([]interface{}, 0, 99)
+	l := make([]interface{}, 0, 128)
 	for i := 0; i < b.N; i++ {
 		l = append(l, i)
 	}
+
+	sink = l
 
 	if testing.Verbose() {
 		b.Logf("len: %d, cap: %d", len(l), cap(l))
